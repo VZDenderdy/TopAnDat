@@ -1,18 +1,20 @@
 import numpy as np
 import torch
-from transformers import RobertaTokenizer, RobertaModel
+from transformers import AutoTokenizer, AutoModel
 from tqdm import tqdm
 # from skdim.id import MLE
 from GPTID.IntrinsicDim import PHD
 
 
 # Insert here path to model files in your syste,
-model_path = 'roberta-base'
+model_path = 'Qwen/Qwen1.5-1.8B'
 tokenizer_path = model_path
 
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
 # Loading the model
-tokenizer = RobertaTokenizer.from_pretrained(tokenizer_path)
-model = RobertaModel.from_pretrained(model_path)
+tokenizer = AutoTokenizer.from_pretrained(model_path)
+model = AutoModel.from_pretrained(model_path).to(device)
 
 
 """
@@ -37,22 +39,22 @@ def preprocess_text(text):
 
 def decode_by_tokens(inputs):
     decoded_tokens = []
-    for token in inputs['input_ids'].reshape(-1)[1:-1]:
+    for token in inputs['input_ids'].reshape(-1):
         decoded_tokens.append(tokenizer.decode([token]))
 
     return decoded_tokens
 
 
-def get_embeds(text, returns_tokenized=False, max_length=512):
+def get_embeds(text, returns_tokenized=False, max_length=2048):
     inputs = tokenizer(preprocess_text(text), truncation=True,
-                       max_length=max_length, return_tensors="pt")
+                       max_length=max_length, return_tensors="pt").to(device)
     with torch.no_grad():
         outp = model(**inputs)
 
     if not returns_tokenized:
-        return outp[0][0].numpy()[1:-1]
+        return outp[0][0].cpu().numpy()
 
-    return outp[0][0].numpy()[1:-1], decode_by_tokens(inputs)
+    return outp[0][0].cpu().numpy(), decode_by_tokens(inputs)
 
 
 '''
@@ -66,36 +68,39 @@ Returns:
                                                     estimated by Persistence Homology Dimension method.'''
 
 
-def get_phd_single(text, solver):
+def get_phd_single(text, solver, max_length=2048):
     inputs = tokenizer(preprocess_text(text), truncation=True,
-                       max_length=512, return_tensors="pt")
+                       max_length=max_length, return_tensors="pt").to(device)
     with torch.no_grad():
         outp = model(**inputs)
 
-    # We omit the first and last tokens (<CLS> and <SEP> because they do not directly correspond to any part of the)
-    mx_points = inputs['input_ids'].shape[1] - 2
-
+    mx_points = inputs['input_ids'].shape[1]
     mn_points = MIN_SUBSAMPLE
     step = (mx_points - mn_points) // INTERMEDIATE_POINTS
 
     print(
-        "mn_points = ", mn_points,
-        'max_points = ', mx_points,
-        'point_jump = ', step
+        "mn_points =", mn_points,
+        "max_points =", mx_points,
+        "point_jump =", step
     )
 
-    print("input_shape:", outp[0][0].numpy()[1:-1].shape)
+    print("input_shape:", outp[0][0].cpu().numpy().shape)
 
-    return solver.fit_transform(outp[0][0].numpy()[1:-1],  min_points=mn_points, max_points=mx_points - step,
-                                point_jump=step)
+    return solver.fit_transform(
+        outp[0][0].cpu().numpy(),
+        min_points=mn_points,
+        max_points=mx_points - step,
+        point_jump=step
+    )
 
 
-def get_phd_single_loop(text, solver, n_tries=10):
+
+def get_phd_single_loop(text, solver, n_tries=10, max_length=2048):
     values = []
     for _ in range(n_tries):
-        values.append(get_phd_single(text, solver))
-
+        values.append(get_phd_single(text, solver, max_length=max_length))
     return np.mean(values)
+
 
 
 def get_raw_phd_in_loop(points, alpha=1.0, n_tries=10):
@@ -189,11 +194,11 @@ Returns:
 
 def get_mle_single(text, solver):
     inputs = tokenizer(preprocess_text(text), truncation=True,
-                       max_length=512, return_tensors="pt")
+                       max_length=2048, return_tensors="pt").to(device)
     with torch.no_grad():
         outp = model(**inputs)
 
-    return solver.fit_transform(outp[0][0].numpy()[1:-1])
+    return solver.fit_transform(outp[0][0].cpu().numpy())
 
 
 '''
